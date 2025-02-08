@@ -629,7 +629,7 @@ class WorldModel(nn.Module):
             # decoding image
             obs_hat = self.image_decoder(flattened_sample)
 
-            # dynamics models
+            # dynamics core
             if self.model == 'Transformer':
                 temporal_mask = get_subsequent_mask_with_batch_length(batch_length, flattened_sample.device)
                 dist_feat = self.sequence_model(flattened_sample, action, temporal_mask)

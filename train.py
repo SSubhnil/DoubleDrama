@@ -370,7 +370,7 @@ if __name__ == "__main__":
         world_model = torch.compile(world_model)
         agent = torch.compile(agent)
     if config.BasicSettings.SavePath != 'None':
-        print('Loading models')
+        print('Loading core')
         world_model.load_state_dict(torch.load(f"{config.BasicSettings.SavePath}/world_model.pth"))
         agent.load_state_dict(torch.load(f"{config.BasicSettings.SavePath}/agent.pth"))
    
