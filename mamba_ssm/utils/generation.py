@@ -22,7 +22,7 @@ except ImportError:
 
 @dataclass
 class InferenceParams:
-    """Inference parameters that are passed to the main model in order
+    """Inference parameters that are passed to the main core in order
     to efficienly calculate and store the context during inference."""
 
     max_seqlen: int
@@ -312,7 +312,7 @@ def decode_speculative(
             batch_size,
             seqlen_og,
             max_length,
-            # draft model needs to process either 1 or 2 tokens at a time
+            # draft core needs to process either 1 or 2 tokens at a time
             decoding_seqlens=(1, 2),
             tensor_parallel=tensor_parallel,
         )
@@ -373,7 +373,7 @@ def decode_speculative(
         return logits[..., :vocab_size] if vocab_size is not None else logits
 
     def sample_tokens(input_ids, get_logits_fn, inference_params, sample_fn, num_tokens=1):
-        """Sample `num_tokens` tokens from the model, given the previous logits.
+        """Sample `num_tokens` tokens from the core, given the previous logits.
         Also return the logits of the sampled tokens.
         Arguments:
             input_ids: (batch, seqlen)
@@ -422,12 +422,12 @@ def decode_speculative(
     num_draft_tokens = 0
     num_accepted_tokens_history = []
     if seqlen_og >= max_length - 1:
-        # Don't do speculative sampling, just sample 1 token from the model
+        # Don't do speculative sampling, just sample 1 token from the core
         tokens, scores_new = sample_tokens_main(input_ids, num_tokens=1)
         sequences.append(tokens)
         scores.append(scores_new)
     else:
-        # Sample from draft model, which produces @n_spec_tokens, and @model
+        # Sample from draft core, which produces @n_spec_tokens, and @core
         # will then use to produce between 1 and 1 + @n_spec_tokens tokens.
         # We want seqlen_og + 1 + @n_spec_tokens to be <= @max_length.
         n_spec_tokens = min(speculative_lookahead, max_length - seqlen_og - 1)
@@ -439,7 +439,7 @@ def decode_speculative(
             ).logits
             print((scores_draft - scores_draft_ref[:, :-1]).abs().max())
 
-        # Evaluate the draft tokens with the model
+        # Evaluate the draft tokens with the core
         logits = get_logits_main(
             torch.cat([input_ids, tokens_draft], dim=1),
             inference_params,
@@ -464,8 +464,8 @@ def decode_speculative(
         # TODO: check eos_token_id
         sequences.append(tokens[:1, : num_generated_tokens[0]])
         scores.append(logits[:1, : num_generated_tokens[0]])
-        # Note that @model has not evaluated the last sampled token yet, so we'll need to pass
-        # that in the next time we call @model.
+        # Note that @core has not evaluated the last sampled token yet, so we'll need to pass
+        # that in the next time we call @core.
         num_generated = num_generated_tokens[0].item()
         inference_params.seqlen_offset = seqlen_og + num_generated - 1
         inference_params_draft.seqlen_offset = (
@@ -484,20 +484,20 @@ def decode_speculative(
         if inference_params.seqlen_offset >= max_length - 1:
             break
         if inference_params.seqlen_offset >= max_length - 2:
-            # Don't do speculative sampling, just sample 1 token from the model
+            # Don't do speculative sampling, just sample 1 token from the core
             tokens, scores_new = sample_tokens_main(sequences[-1][:, -1:], num_tokens=1)
             sequences.append(tokens)
             scores.append(scores_new)
             break
-        # Sample from draft model
+        # Sample from draft core
         n_spec_tokens = min(
             speculative_lookahead, max_length - inference_params_draft.seqlen_offset - 2
         )
-        # If the main model accepts all the draft tokens, plus it samples one new token,
-        # then at the next iteration the draft model need to evaluate the logits of the last draft
+        # If the main core accepts all the draft tokens, plus it samples one new token,
+        # then at the next iteration the draft core need to evaluate the logits of the last draft
         # token and the logits of the newly sampled token. So here we pass in the last 2 tokens
         # of sequences[-1].
-        # This exception is when the main model rejects all the draft tokens, in which case we
+        # This exception is when the main core rejects all the draft tokens, in which case we
         # will only have 1 token to pass in.
         tokens_draft, scores_draft = sample_tokens_draft(
             sequences[-1][:, -2:], num_tokens=n_spec_tokens
@@ -509,7 +509,7 @@ def decode_speculative(
             ).logits
             print((scores_draft - scores_draft_ref[:, :-1]).abs().max())
             # breakpoint()
-        # Evaluate the draft tokens with the model
+        # Evaluate the draft tokens with the core
         logits = get_logits_main(
             torch.cat([sequences[-1][:, -1:], tokens_draft], dim=1),
             inference_params,
@@ -533,7 +533,7 @@ def decode_speculative(
         sequences.append(tokens[:1, : num_generated_tokens[0]])
         scores.append(logits[:1, : num_generated_tokens[0]])
         # We've evaluated 1 token from sequences[-1][:, -1:] above, plus
-        # num_generated_tokens[0].item() - 1 tokens from the draft model.
+        # num_generated_tokens[0].item() - 1 tokens from the draft core.
         num_generated = num_generated_tokens[0].item()
         inference_params.seqlen_offset += num_generated
         inference_params_draft.seqlen_offset = (
@@ -552,7 +552,7 @@ def decode_speculative(
             torch.distributed.barrier()
         torch.cuda.synchronize()
         print(f"Prompt processing + decoding time: {(time.time() - start) * 1000:.0f}ms")
-        print(f"Number of calls to main model: {num_main_model_calls}")
+        print(f"Number of calls to main core: {num_main_model_calls}")
         print(
             f"Acceptance rate: {torch.cat(num_accepted_tokens_history).sum().item() / num_draft_tokens * 100:.2f}%"
         )
@@ -645,7 +645,7 @@ def update_graph_cache(
         gc.collect()
         cache.device, cache.dtype = device, dtype
         cache.max_batch_size, cache.max_seqlen = batch_size, max_seqlen
-        assert hasattr(model, "allocate_inference_cache"), "CUDA graph decoding requires that the model has a method allocate_inference_cache"
+        assert hasattr(model, "allocate_inference_cache"), "CUDA graph decoding requires that the core has a method allocate_inference_cache"
         inf_cache = model.allocate_inference_cache(batch_size, max_seqlen, dtype)
         lengths_per_sample = torch.full((batch_size,), seqlen_og, dtype=torch.int32, device=device)
         cache.inference_params = InferenceParams(

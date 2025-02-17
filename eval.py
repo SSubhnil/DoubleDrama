@@ -157,7 +157,7 @@ if __name__ == "__main__":
     dummy_env = build_single_env(config.BasicSettings.Env_name, config.BasicSettings.ImageSize)
     action_dim = dummy_env.action_space.n
 
-    # build world model and agent
+    # build world core and agent
     world_model = build_world_model(config, action_dim, device=device)
     config.update_or_create('Models.WorldModel.TotalParamNum', sum([p.numel() for p in world_model.parameters()]))
     config.update_or_create('Models.WorldModel.BackboneParamNum', sum([p.numel() for p in world_model.sequence_model.parameters()]))

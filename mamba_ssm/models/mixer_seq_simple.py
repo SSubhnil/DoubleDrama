@@ -107,7 +107,7 @@ def _init_weights(
 
     if rescale_prenorm_residual:
         # Reinitialize selected weights subject to the OpenAI GPT-2 Paper Scheme:
-        #   > A modified initialization which accounts for the accumulation on the residual path with model depth. Scale
+        #   > A modified initialization which accounts for the accumulation on the residual path with core depth. Scale
         #   > the weights of residual layers at initialization by a factor of 1/√N where N is the # of residual layers.
         #   >   -- GPT-2 :: https://openai.com/blog/better-language-models/
         #
@@ -194,7 +194,7 @@ class MixerModel(nn.Module):
         # We change the order of residual and layer norm:
         # Instead of LN -> Attn / MLP -> Add, we do:
         # Add -> LN -> Attn / MLP / Mixer, returning both the residual branch (output of Add) and
-        # the main branch (output of MLP / Mixer). The model definition is unchanged.
+        # the main branch (output of MLP / Mixer). The core definition is unchanged.
         # This is for performance reason: we can fuse add + layer_norm.
         self.fused_add_norm = fused_add_norm
         if self.fused_add_norm:

@@ -380,7 +380,7 @@ class ModelBased(nn.Module):
         return action
 
     def save(self, path):
-        torch.save({"model": self.state_dict(),
+        torch.save({"core": self.state_dict(),
                     "optimizer": self.optimizer.state_dict()
                     }, path)
 
@@ -394,5 +394,5 @@ class ModelBased(nn.Module):
         if path is not None and os.path.exists(path):
             print("ModelBased loaded", path)
             checkpoint = torch.load(path, map_location=device)
-            self.load_my_state_dict(checkpoint["model"])                # only load reward predictor
+            self.load_my_state_dict(checkpoint["core"])                # only load reward predictor
             self.optimizer.load_state_dict(checkpoint["optimizer"])

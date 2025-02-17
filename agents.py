@@ -221,7 +221,7 @@ class ActorCriticAgent(nn.Module):
     @profile
     def update(self, latent, action, old_logits, context_latent, context_reward, context_termination, reward, termination, logger, global_step):
         '''
-        Update policy and value model
+        Update policy and value core
         '''
         self.train()
         with torch.autocast(device_type='cuda', dtype=torch.bfloat16, enabled=self.use_amp):

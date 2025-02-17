@@ -19,7 +19,7 @@ class InferenceOursBase(Inference, metaclass=ABCMeta):
         params = self.params
         ours_params = self.params.ours_params
 
-        # model params
+        # core params
         continuous_state = self.continuous_state
 
         self.action_dim = action_dim = params.action_dim
@@ -292,7 +292,7 @@ class InferenceOursBase(Inference, metaclass=ABCMeta):
                 self.local_causal_model.emb.training = False
 
     def save(self, path):
-        torch.save({"model": self.state_dict(),
+        torch.save({"core": self.state_dict(),
                     "optimizer": self.optimizer.state_dict(),
                     }, path)
 

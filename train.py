@@ -66,7 +66,7 @@ def world_model_imagine_data(replay_buffer: ReplayBuffer,
                              imagine_context_length, imagine_batch_length,
                              log_video, logger, global_step):
     '''
-    Sample context from replay buffer, then imagine data with world model and agent
+    Sample context from replay buffer, then imagine data with world core and agent
     '''
     world_model.eval()
     agent.eval()
@@ -209,7 +209,7 @@ def joint_train_world_model_agent(config, logdir,
         if config.Evaluate.DuringTraining and total_steps % (config.Evaluate.EverySteps // config.JointTrainAgent.NumEnvs) == 0:
             _ = eval_episodes(config, world_model, agent, logger, total_steps)
         if config.JointTrainAgent.SaveModels and total_steps % (config.JointTrainAgent.SaveEverySteps // config.JointTrainAgent.NumEnvs) == 0:
-            print(colorama.Fore.GREEN + f"Saving model at total steps {total_steps}" + colorama.Style.RESET_ALL)
+            print(colorama.Fore.GREEN + f"Saving core at total steps {total_steps}" + colorama.Style.RESET_ALL)
             torch.save(world_model.state_dict(), f"{logdir}/ckpt/world_model.pth")
             torch.save(agent.state_dict(), f"{logdir}/ckpt/agent.pth")
 
@@ -315,10 +315,10 @@ def parse_args_and_update_config(config, prefix=''):
 
 def update_model_parameters(config, world_model, agent):
     config.update_or_create('Models.WorldModel.TotalParamNum', sum([p.numel() for p in world_model.parameters()]))
-    print(f'World model total parameters: {sum([p.numel() for p in world_model.parameters()]):,}')
+    print(f'World core total parameters: {sum([p.numel() for p in world_model.parameters()]):,}')
     
     config.update_or_create('Models.WorldModel.BackboneParamNum', sum([p.numel() for p in world_model.sequence_model.parameters()]))
-    print(f'Dynamic model parameters: {sum([p.numel() for p in world_model.sequence_model.parameters()]):,}')
+    print(f'Dynamic core parameters: {sum([p.numel() for p in world_model.sequence_model.parameters()]):,}')
     
     config.update_or_create('Models.WorldModel.EncoderParamNum', sum([p.numel() for p in world_model.encoder.parameters()]))
     print(f'Encoder parameters: {sum([p.numel() for p in world_model.encoder.parameters()]):,}')
@@ -362,7 +362,7 @@ if __name__ == "__main__":
 
     action_dim = dummy_env.action_space.n
 
-    # build world model and agent
+    # build world core and agent
     world_model = build_world_model(config, action_dim, device=device)
     agent = build_agent(config, action_dim, device=device)
     update_model_parameters(config, world_model, agent)

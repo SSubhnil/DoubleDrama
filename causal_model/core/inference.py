@@ -332,7 +332,7 @@ class Inference(nn.Module):
         self.train(False)
 
     def save(self, path):
-        torch.save({"model": self.state_dict(),
+        torch.save({"core": self.state_dict(),
                     "optimizer": self.optimizer.state_dict()
                     }, path)
 
@@ -340,5 +340,5 @@ class Inference(nn.Module):
         if path is not None and os.path.exists(path):
             print("inference loaded", path)
             checkpoint = torch.load(path, map_location=device)
-            self.load_state_dict(checkpoint["model"])
+            self.load_state_dict(checkpoint["core"])
             self.optimizer.load_state_dict(checkpoint["optimizer"])

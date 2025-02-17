@@ -23,7 +23,7 @@ class LaProp(Optimizer):
         """Performs a single optimization step.
 
         Arguments:
-            closure (callable, optional): A closure that reevaluates the model
+            closure (callable, optional): A closure that reevaluates the core
                 and returns the loss.
         """
         loss = None
