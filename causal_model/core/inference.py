@@ -11,14 +11,14 @@ from torch.distributions.distribution import Distribution
 from torch.distributions.one_hot_categorical import OneHotCategorical
 from torch.distributions.kl import kl_divergence
 
-from ..utils.utils import to_numpy, preprocess_obs, postprocess_obs
+# from ..utils.utils import to_numpy, preprocess_obs, postprocess_obs
 
 
 class Inference(nn.Module):
-    def __init__(self, encoder, params):
+    def __init__(self, embedder, params):
         super(Inference, self).__init__()
 
-        self.encoder = encoder
+        self.embedder = embedder
 
         self.params = params
         self.device = device = params.device
@@ -28,6 +28,7 @@ class Inference(nn.Module):
         self.residual = inference_params.residual
         self.log_std_min = inference_params.log_std_min
         self.log_std_max = inference_params.log_std_max
+        # Flags for latent representations
         self.continuous_state = params.continuous_state
         self.continuous_action = params.continuous_action
         self.num_action_variable = params.num_action_variable
@@ -45,6 +46,7 @@ class Inference(nn.Module):
         self.load(params.training_params.load_inference, device)
         self.train()
     
+    # We don't have ground truth global mask. UNUSED.
     def get_gt_global_mask(self, num_state_variable, num_action_variable):
         if self.env_name == 'Chemical':
             self.gt_global_mask = torch.zeros(num_state_variable, num_state_variable + num_action_variable).to(self.device)
@@ -176,8 +178,8 @@ class Inference(nn.Module):
 
         return dists
 
-    def get_feature(self, obs):
-        feature = self.encoder(obs)
+    def get_feature(self, hidden_state):
+        feature = self.embedder(hidden_state)
         if isinstance(feature, Distribution):
             assert isinstance(feature, Normal)
             feature = feature.mean
@@ -218,8 +220,8 @@ class Inference(nn.Module):
 
     def update(self, obses, actions, next_obses, eval=False):
         assert not self.training == eval
-        features = self.encoder(obses)
-        next_features = self.encoder(next_obses)
+        features = self.embedder(obses)
+        next_features = self.embedder(next_obses)
         pred_next_dist = self.forward_with_feature(features, actions)
 
         pred_loss = self.prediction_loss_from_dist(pred_next_dist, next_features)
@@ -266,18 +268,18 @@ class Inference(nn.Module):
         obs, actions, next_obses, _ = self.preprocess(obs, actions, next_obses)
         if len(actions.shape) == 2: actions = actions.unsqueeze(-1)
         with torch.no_grad():
-            feature = self.encoder(obs)
-            next_feature = self.encoder.get_clean_obs(next_obses)
+            feature = self.embedder(obs)
+            next_feature = self.embedder.get_clean_obs(next_obses)
 
             pred_next_dist = self.forward_with_feature(feature, actions)
             pred_loss = self.prediction_loss_from_dist(pred_next_dist, next_feature, keep_variable_dim=True)
             loss_detail = {}
 
             if self.params.env_params.env_name == "Chemical":
-                if self.encoder.chemical_train:
-                    match_type = self.encoder.chemical_match_type_train
+                if self.embedder.chemical_train:
+                    match_type = self.embedder.chemical_match_type_train
                 else:
-                    match_type = self.encoder.chemical_match_type_test
+                    match_type = self.embedder.chemical_match_type_test
                 accuracy = []
                 for i, (dist_i, next_feature_i) in enumerate(zip(pred_next_dist, next_feature)):
                     if not isinstance(dist_i, OneHotCategorical):
@@ -302,8 +304,8 @@ class Inference(nn.Module):
         if len(actions.shape) == 2: actions = actions.unsqueeze(-1)
 
         with torch.no_grad():
-            feature = self.encoder(obs)
-            next_feature = self.encoder(next_obses)
+            feature = self.embedder(obs)
+            next_feature = self.embedder(next_obses)
             pred_next_dist = self.forward_with_feature(feature, actions)
 
             pred_loss = self.prediction_loss_from_dist(pred_next_dist, next_feature, keep_variable_dim=True)

@@ -275,3 +275,122 @@ class VQVAEGumbelMatrixLatent(torch.nn.Module):
         
         self.loss_function(prob, z_e, emb)
         return sample, prob
+
+class HiddenStateDiscretizer(nn.Module):
+    """
+    Discretizes World Model's hidden state h_t.
+    Optional: Can discrteize World Model's stochastic + hidden state.
+    """
+    def __init__(
+        self,
+        hidden_dim,       # dimension of h_t from transformer
+        code_dim,         # dimension of latent code
+        codebook_size,    # number of discrete codes
+        fc_dims,          # list of hidden dimensions for encoder MLP layers
+        device,
+        use_ema=False,    # whether to use EMA for the codebook
+        ema_decay=0.99,
+        reg_coef=1.0,
+        vq_coef=1.0,
+        commit_coef=1.0
+    ):
+        super(HiddenStateDiscretizer, self).__init__()
+        self.hidden_dim = hidden_dim
+        self.code_dim = code_dim
+        self.codebook_size = codebook_size
+        self.device = device
+
+        # Build the encoder: maps h_t to the latent space
+        enc_layers = []
+        in_dim = hidden_dim
+        for idx, out_dim in enumerate(fc_dims):
+            enc_layers.append(nn.Linear(in_dim, out_dim, bias=False))
+            enc_layers.append(nn.BatchNorm1d(out_dim))
+            enc_layers.append(nn.LeakyReLU())
+            in_dim = out_dim
+        enc_layers.append(nn.Linear(in_dim, code_dim))
+        self.encoder = nn.Sequential(*enc_layers)
+        self.encoder.apply(kaiming_init)
+
+        # Build the decoder (optional, for reconstruction loss)
+        dec_layers = []
+        in_dim = code_dim
+        for idx, out_dim in enumerate(fc_dims[::-1]):
+            dec_layers.append(nn.Linear(in_dim, out_dim, bias=False))
+            dec_layers.append(nn.BatchNorm1d(out_dim))
+            dec_layers.append(nn.LeakyReLU())
+            in_dim = out_dim
+        dec_layers.append(nn.Linear(in_dim, hidden_dim))
+        self.decoder = nn.Sequential(*dec_layers)
+        self.decoder.apply(kaiming_init)
+
+        # Codebook embedding: using either standard or EMA-based nearest embedding
+        self.use_ema = use_ema
+        if self.use_ema:
+            self.emb = NearestEmbedEMA(codebook_size, code_dim, decay=ema_decay)
+        else:
+            self.emb = NearestEmbed(codebook_size, code_dim)
+
+        self.reg_coef = reg_coef
+        self.vq_coef = vq_coef
+        self.commit_coef = commit_coef
+
+        self.reset_loss()
+
+    def reset_loss(self):
+        self.reg_loss_list = []
+        self.vq_loss_list = []
+        self.commit_loss_list = []
+        self.reg_loss = 0
+        self.vq_loss = 0
+        self.commit_loss = 0
+
+    def forward(self, h, tau=1, drawhard=True, training=True):
+        """
+        Forward pass:
+         - h: transformer's hidden state of shape [B, hidden_dim]
+         - tau, drawhard: parameters if you want to use a Gumbel-sigmoid (optional)
+         - training: flag indicating training/inference mode
+        """
+        # Encode hidden state to latent continuous embedding z_e
+        z_e = self.encoder(h)  # shape: [B, code_dim]
+
+        # Quantize the embedding using the codebook
+        if self.use_ema:
+            z_q, code_indices = self.emb(z_e)
+            # Use straight-through estimator
+            z_q = z_e + (z_q - z_e).detach()
+        else:
+            z_q, code_indices = self.emb(z_e, weight_sg=True)
+            # Obtain an embedding from the detached path for VQ loss calculation
+            _, _ = self.emb(z_e.detach())
+            z_q = z_e + (z_q - z_e).detach()
+
+        # Reconstruct hidden state (optional)
+        h_recon = self.decoder(z_q)
+
+        # Compute losses (for VQ-VAE training)
+        # Regularization loss: encourages z_e to be close to z_q
+        self.reg_loss_list.append((z_e - z_q.detach()).pow(2).mean())
+        # VQ loss: when not using EMA
+        if not self.use_ema:
+            self.vq_loss_list.append((z_q - z_e.detach()).pow(2).mean())
+        # Commitment loss: encourages the encoder to commit to the codebook
+        self.commit_loss_list.append((z_e - z_q.detach()).pow(2).mean())
+
+        return {
+            "z_e": z_e,              # continuous latent embedding
+            "z_q": z_q,              # quantized latent embedding (with straight-through estimator)
+            "h_recon": h_recon,      # reconstructed hidden state (optional)
+            "code_indices": code_indices
+        }
+
+    def total_loss(self):
+        reg_loss = torch.stack(self.reg_loss_list).mean()
+        commit_loss = torch.stack(self.commit_loss_list).mean()
+        if self.use_ema:
+            vq_loss = 0.0
+        else:
+            vq_loss = torch.stack(self.vq_loss_list).mean()
+        total = self.reg_coef * reg_loss + self.vq_coef * vq_loss + self.commit_coef * commit_loss
+        return total
