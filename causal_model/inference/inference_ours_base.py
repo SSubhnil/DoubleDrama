@@ -5,7 +5,7 @@ import torch.nn as nn
 import torch.nn.functional as F
 from torch.distributions.one_hot_categorical import OneHotCategorical
 
-from .gumbel import VQVAEGumbelMatrixLatent
+from causal_model.core.gumbel import VQVAEGumbelMatrixLatent
 from .inference import Inference
 from .inference_utils import forward_network, forward_network_batch, reset_layer
 
