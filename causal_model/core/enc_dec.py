@@ -12,8 +12,6 @@ class CausalEncoder(nn.Module):
         self.params = params
         self.hidden_state_dim = params.hidden_state_dim
         self.feature_dim = params.code_dim
-        self.tr_codebook_size = params.tr_codebook_size
-        self.re_codebook_size = params.re_codebook_size
 
         # Feature Projection Layers
         self.tr_proj = MLP(self.hidden_state_dim, self.feature_dim, [self.hidden_state_dim//2],
@@ -35,10 +33,10 @@ class CausalEncoder_Confounder(CausalEncoder):
         # Confounder prior is a Gaussian dist conditioned on the hidden state.
         # Confounder parameters (mi, sig) generator
         # Define Confounder Prior Network
-        self.confounder_mu = nn.Sequential(
+        self.confounder_prior_mu = nn.Sequential(
             nn.Linear(self.hidden_state_dim, self.feature_dim),
             nn.Tanh())
-        self.confounder_logvar = nn.Sequential(
+        self.confounder_prior_logvar = nn.Sequential(
             nn.Linear(self.hidden_state_dim, self.feature_dim),
             nn.Hardtanh(min_val=-6, max_val=0) # Apparently stabilizes training
         )
