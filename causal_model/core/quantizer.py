@@ -24,33 +24,41 @@ class VQQuantizer(nn.Module):
         self.beta = beta
         self.temperature = temperature
         self.use_cdist = use_cdist
+        # When True, codebook vectors reside on the unit sphere
+        # Ensures cosine similarity calculation are equivalent to L2 distance when inputs are normalized
         self.normalize = normalize
 
-        # Initialize the codebook using Kaiming Uniform
-        self.codebook = nn.Parameter(torch.empty(num_codes, code_dim))
-        kaiming_uniform_(self.codebook, a=math.sqrt(5))
+        if self.normalize:
+            self.codebook = nn.Parameter(torch.randn(self.num_codes, self.code_dim))
+            with torch.no_grad():
+                self.codebook.data = F.normalize(self.codebook.data, p=2, dim=1)
+
+        else:
+            # Initialize the codebook using Kaiming Uniform
+            self.codebook = nn.Parameter(torch.empty(self.num_codes, self.code_dim))
+            kaiming_uniform_(self.codebook, a=math.sqrt(5))
 
     def forward(self, h: torch.Tensor):
         """
         Args:
             h (Tensor): Input latent embeddings of shape [B, D]
         """
-        # Optional normalization of inputs and codebook vectors
+        # Unit sphere normalization with numerical stability
         if self.normalize:
-            h = F.normalize(h, p=2, dim=1)
-            codebook = F.normalize(self.codebook, p=2, dim=1)
+            h = F.normalize(h, p=2, dim=1, eps=1e-6)
+            codebook = F.normalize(self.codebook, p=2, dim=1, eps=1e-6)
         else:
             codebook = self.codebook
 
         # Compute L2
         if self.use_cdist:
-            distances = torch.cdist(h, codebook, p=2) ** 2 # Shape: [B, num_codes]
+            distances = torch.cdist(h, codebook, p=2) ** 2  # Shape: [B, num_codes]
         else:
-            h_sq = torch.sum(h ** 2, dim=1, keepdim=True) # [B, 1]
-            codebook_sq = torch.sum(codebook ** 2, dim=1) # [num_codes]
+            h_sq = torch.sum(h ** 2, dim=1, keepdim=True)  # [B, 1]
+            codebook_sq = torch.sum(codebook ** 2, dim=1)  # [num_codes]
             distances = h_sq + codebook_sq - 2 * torch.matmul(h, codebook.t())
 
-        # Compute Gumbel soft assignments with temperature scaling
+        # Compute Gumbel-soft assignments with temperature scaling
         q = F.gumbel_softmax(-distances, tau=self.temperature,hard=False, dim=1) # [B, num_codes]
 
         # Gumbel Soft quantized code as a weighted sum
@@ -58,23 +66,28 @@ class VQQuantizer(nn.Module):
         # c_tilde = torch.matmul(q, codebook) # [B, D]
 
         # Hard assignments via argmax
-        indices = torch.argmax(q, dim=1)  # [B]
+        indices = torch.argmax(q, dim=1)  # [B]  Non-differentiable
         c_hard = codebook[indices]        # [B, D]
 
         # Straight-through estimator: use hard code in forward pass but gradients
         # flow through c_tilde
-        c_quantized = c_tilde + (c_hard - c_tilde).detach()
+        c_quantized = c_tilde + (c_hard - c_tilde.detach())
+
+        # Stabilized losses
+        codebook_loss = F.mse_loss(h.detach(), c_hard) # Pulls codebook to embedded h
+        commitment_loss = F.mse_loss(h, c_hard.detach()) # Push h to codebook
+
 
         # Quantization loss: push codebook vectors toward h (with h detached) and commitment loss
-        loss = F.mse_loss(h.detach(), c_hard) + self.beta * F.mse_loss(h, c_hard.detach())
+        loss = codebook_loss + self.beta * commitment_loss
 
         return q, c_tilde, c_hard, c_quantized, loss
 
-    def anneal_temperature(self, factor: float):
+    def anneal_temperature(self, factor: float, min_temp=0.01):
         """
         Anneals the temperature by multiplying it by a factor (< 1 to reduce temperature).
         """
-        self.temperature *= factor
+        self.temperature *= max(self.temperature * factor, min_temp)
 
     def set_temperature(self, new_temp: float):
         """

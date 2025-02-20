@@ -84,9 +84,6 @@ class ConfounderApproximator(nn.Module):
 
         # Reparameterization trick
         u = torch.normal(mu_post, torch.exp(0.5 * logvar_post))  # ~15% faster on CUDA
-        # std = torch.exp(0.5 * logvar_post)
-        # eps = torch.randn_like(std)
-        # u = mu_post + eps * std # Differentiable sampling
 
         # Apply code-specific affine transformation
         # Constrained affine parameters
