@@ -66,7 +66,7 @@ class VQQuantizer(nn.Module):
         c_quantized = c_tilde + (c_hard - c_tilde).detach()
 
         # Quantization loss: push codebook vectors toward h (with h detached) and commitment loss
-        loss = F.mse_loss(h.detach(). c_hard) + self.beta * F.mse_loss(h, c_hard.detach())
+        loss = F.mse_loss(h.detach(), c_hard) + self.beta * F.mse_loss(h, c_hard.detach())
 
         return q, c_tilde, c_hard, c_quantized, loss
 
@@ -82,7 +82,7 @@ class VQQuantizer(nn.Module):
         """
         self.temperature = new_temp
 
-class DualVQQuantizer(nn.module):
+class DualVQQuantizer(nn.Module):
     """
     Implements two separate VQQuantizers for the transition and reward branches
 

@@ -3,7 +3,6 @@ import numpy as np
 import torch
 import torch.nn as nn
 import torch.nn.functional as F
-
 from networks import MLP
 
 class CausalEncoder(nn.Module):
@@ -19,13 +18,11 @@ class CausalEncoder(nn.Module):
         self.re_proj = MLP(self.hidden_state_dim, self.feature_dim, [self.hidden_state_dim//2],
                            activation=nn.SiLU)
 
-
-
     def forward(self, h):
         # Extract Features
         return{'tr_features': self.tr_proj(h), 're_features': self.re_proj(h)}
 
-# Initialized for confounder modeling
+# Initialized for confounder prior
 class CausalEncoder_Confounder(CausalEncoder):
     def __init__(self, params):
         super().__init__(params)
@@ -35,29 +32,25 @@ class CausalEncoder_Confounder(CausalEncoder):
         # Define Confounder Prior Network
         self.confounder_prior_mu = nn.Sequential(
             nn.Linear(self.hidden_state_dim, self.feature_dim),
-            nn.Tanh())
+            nn.Dropout(p=0.1)) # Removed tanh() for better adaptability
+
         self.confounder_prior_logvar = nn.Sequential(
             nn.Linear(self.hidden_state_dim, self.feature_dim),
-            nn.Hardtanh(min_val=-6, max_val=0) # Apparently stabilizes training
+            nn.Softplus(), # Smooth positive training
+            nn.Linear(self.feature_dim, self.feature_dim) # Learned scale factor
         )
+        nn.init.constant_(self.confounder_prior_logvar[-1].weight, 0.5) # Initial scale
 
-    def reparameterize(self, mu, logvar):
-        std = torch.exp(0.5*logvar)
-        eps = torch.randn_like(std)
-        return mu + eps*std
-
-    def forward(self, h):
+    def forward(self, h: torch.Tensor, code_ids: torch.Tensor = None):
         base_features = super().forward(h)
 
         # Generate confounder prior distribution parameters
-        mu = self.confounder_mu(h)
-        logvar = self.confounder_logvar(h)
-        confounder = self.reparameterize(mu, logvar)
+        mu = self.confounder_prior_mu(h)
+        logvar = self.confounder_prior_logvar(h)
 
         return {**base_features,
                 'confounder_mu': mu,
                 'confounder_logvar': logvar,
-                'confounder_sample': confounder
                 }
 
 class CausalDecoder(nn.Module):
