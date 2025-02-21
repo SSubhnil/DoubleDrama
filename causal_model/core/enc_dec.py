@@ -27,30 +27,30 @@ class CausalEncoder_Confounder(CausalEncoder):
     def __init__(self, params):
         super().__init__(params)
 
+        self.code_emb = nn.Embedding(params.num_codes, params.code_dim) # Shared embeddings
+
         # Confounder prior is a Gaussian dist conditioned on the hidden state.
         # Confounder parameters (mi, sig) generator
-        # Define Confounder Prior Network
-        self.confounder_prior_mu = nn.Sequential(
-            nn.Linear(self.hidden_state_dim, self.feature_dim),
-            nn.Dropout(p=0.1)) # Removed tanh() for better adaptability
-
-        self.confounder_prior_logvar = nn.Sequential(
-            nn.Linear(self.hidden_state_dim, self.feature_dim),
-            nn.Softplus(), # Smooth positive training
-            nn.Linear(self.feature_dim, self.feature_dim) # Learned scale factor
+        # Define Confounder Prior HyperNetwork
+        self.prior_network = nn.Sequential(
+            nn.Linear(params.hidden_dim + params.code_dim, 512),
+            nn.Linear(512, 2*params.feature_dim) # mu and logvar
         )
-        nn.init.constant_(self.confounder_prior_logvar[-1].weight, 0.5) # Initial scale
+
 
     def forward(self, h: torch.Tensor, code_ids: torch.Tensor = None):
         base_features = super().forward(h)
 
+        code_features = self.code_emb(code_ids)
+        h_code = torch.cat([h, code_features], -1)
+
         # Generate confounder prior distribution parameters
-        mu = self.confounder_prior_mu(h)
-        logvar = self.confounder_prior_logvar(h)
+        parameters = self.prior_network(h_code)
+        mu_prior, logvar_prior = torch.chunk(parameters, 2, dim=-1)
 
         return {**base_features,
-                'confounder_mu': mu,
-                'confounder_logvar': logvar,
+                'confounder_mu': mu_prior,
+                'confounder_logvar': logvar_prior,
                 }
 
 class CausalDecoder(nn.Module):

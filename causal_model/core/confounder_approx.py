@@ -7,6 +7,22 @@ Posterior computation only.
 See end_dec.py for regularized confounder prior.
 """
 
+class PosteriorHypernet(nn.Module):
+    """Generates posterior network weights conditioned on the code IDs"""
+    def __init__(self, code_dim, hidden_dim, out_dim):
+        super().__init__()
+        self.weight_gen = nn.Sequential(nn.Linear(code_dim, 4*hidden_dim*out_dim),
+                                        nn.Unflatten(-1, (4, hidden_dim, out_dim))
+                                        )
+
+    def forward(self, x, code_emb):
+        # Generate dynamic weights [4, hidden_dim, out_dim]
+        weights = self.weight_gen(code_emb)
+        x = F.linear(x, weights[0], bias=None)
+        x = F.silu(x)
+        x = F.linear(x, weights[1], bias=None)
+        return x
+
 class ConfounderApproximator(nn.Module):
     """
     We implement Part 2B of report
@@ -33,18 +49,22 @@ class ConfounderApproximator(nn.Module):
         self.code_embed = nn.Embedding(self.num_codes, self.embed_dim)
 
         # Posterior networks
-        self.confounder_post_mu_net = nn.Sequential(
-            nn.Linear(code_dim * 2, self.hidden_dim), # Concat code dim + embed_dim
-            nn.SiLU(inplace=True),
-        nn.Linear(self.hidden_dim, conf_dim), # posterior mu
-        )
+        self.confounder_post_mu_net = PosteriorHypernet(self.code_dim, self.hidden_dim, self.conf_dim)
 
-        self.confounder_post_logvar_net = nn.Sequential(
-            nn.Linear(code_dim *2, self.hidden_dim),
-            nn.SiLU(inplace=True), # \sigma \in (0, \inf)
-            nn.Linear(self.hidden_dim, conf_dim),
-            nn.Softplus() # Optionally constraint to (-a, a) if needed
-        )
+        self.confounder_post_logvar_net = PosteriorHypernet(self.code_dim, self.hidden_dim, self.conf_dim)
+
+        # self.confounder_post_mu_net = nn.Sequential(
+        #     nn.Linear(code_dim * 2, self.hidden_dim), # Concat code dim + embed_dim
+        #     nn.SiLU(inplace=True),
+        # nn.Linear(self.hidden_dim, conf_dim), # posterior mu
+        # )
+
+        # self.confounder_post_logvar_net = nn.Sequential(
+        #     nn.Linear(code_dim *2, self.hidden_dim),
+        #     nn.SiLU(inplace=True), # \sigma \in (0, \inf)
+        #     nn.Linear(self.hidden_dim, conf_dim),
+        #     nn.Softplus() # Optionally constraint to (-a, a) if needed
+        # )
         nn.init.constant_(self.confounder_post_logvar_net[-2].bias, -1.0)
 
         # Code-specific affine parameters  \phi_c(u) = s_c \odot u + t_c
@@ -67,48 +87,41 @@ class ConfounderApproximator(nn.Module):
             kl_loss: D_KL(Q(u|h,c) || P(u|h)) + regularization
         """
         # Call confounder prior network
-        from_confounder_prior = self.encoder(h)
+        from_confounder_prior = self.encoder(h, code_ids)
         mu_prior = from_confounder_prior['confounder_mu']
         logvar_prior = from_confounder_prior['confounder_logvar']
 
-        h_proj = self.h_proj(h) # [B, hidden_dim]
-        code_emb = self.code_embed(code_ids) # [B, embed_dim]
-        code_proj = self.code_proj(code_emb)
-
-        # Concat h with code emb for posterior conditioning
-        h_code = h_proj + code_proj # [B, code_dim * 2]
-
-        # Compute posterior parameters
-        mu_post = self.confounder_post_mu_net(h_code)
-        logvar_post = self.confounder_post_logvar_net(h_code) # Hardtanh constrained
+        # Hypernetwork based posterior
+        code_emb = self.code_embed(code_ids)  # [B, embed_dim]
+        mu_post = self.confounder_post_mu_net(h, code_emb)
+        logvar_post = self.confounder_post_logvar_net(h, code_emb)
 
         # Reparameterization trick
-        u = torch.normal(mu_post, torch.exp(0.5 * logvar_post))  # ~15% faster on CUDA
-
-        # Apply code-specific affine transformation
-        # Constrained affine parameters
-        log_scale = self.affine_scale(code_ids)
-        scale = torch.exp(log_scale.clamp(max=1.0)) # \in (0, e^1\approx 2.718)
-        shift = torch.tanh(self.affine_shift(code_ids)) # in (-1,1)
-        u_transformed = scale * u + shift # Element-wise ops
+        u_post = torch.normal(mu_post, torch.exp(0.5 * logvar_post))  # ~15% faster on CUDA
 
         kl_loss = self.gaussian_KL(mu_post, logvar_post, mu_prior, logvar_prior)
 
-        return u_transformed, kl_loss
+        return u_post, kl_loss
 
-    def regularization_loss(self, lamdba_weight=0.01):
+    # Redundant due to non-use of scale and shift
+    def regularization_loss_2(self, lamdba_weight=0.01):
         # Encourage sparse affine transformations
         scale_reg = torch.mean(torch.abs(self.affine_scale.weight))
         shift_reg = torch.mean(torch.abs(self.affine_shift.weight))
         return lamdba_weight * (scale_reg + shift_reg)
 
-    def regularization_loss_2(self):
-        # Penalize deviation from identity transform
-        scale_dev = torch.mean((self.affine_scale.weight - 0.0) ** 2)  # log_scale=0 → scale=1
-        shift_dev = torch.mean(self.affine_shift.weight ** 2)
-        # Add posterior variance regularization
-        var_reg = torch.mean(torch.exp(self.confounder_post_logvar_net[-2].weight ** 2))
-        return 0.01 * (scale_dev + shift_dev) + 0.001 * var_reg
+    # Main regularizer
+    def regularization_loss(self):
+        # Hypernetwork parameter regularization
+        hyper_params = list(self.confounder_post_mu_net.parameters()) + \
+                       list(self.confounder_post_logvar_net.parameters())
+
+        l2_reg = torch.sum(torch.stack([torch.norm(p) for p in hyper_params]))
+
+        # Code embedding sparsity
+        code_sparsity = torch.mean(torch.abs(self.code_embed.weight))
+
+        return 0.001*l2_reg + 0.01*code_sparsity
 
     def gaussian_KL(self, mu_post: torch.Tensor, logvar_post: torch.Tensor,
                     mu_prior: torch.Tensor, logvar_prior: torch.Tensor):

@@ -6,8 +6,8 @@ from quantizer import DualVQQuantizer
 from confounder_approx import ConfounderApproximator
 from networks import MLP
 
-class CausalInterface(nn.Module):
-    def __init__(self, params):
+class CausalModel(nn.Module):
+    def __init__(self, params, device):
         super().__init__()
         self.params = params
 
@@ -15,7 +15,7 @@ class CausalInterface(nn.Module):
         self.quantizer = DualVQQuantizer(code_dim=params.code_dim,
                                          num_codes_tr=params.num_codes_tr,
                                          num_codes_re=params.num_codes_re,
-                                         coupling=True)
+                                         coupling=False)
 
         self.encoder = self.create_causal_encoder(self.params)
 
@@ -27,7 +27,8 @@ class CausalInterface(nn.Module):
         # Hidden state modulation network
         self.state_mod = nn.Sequential(nn.Linear(params.code_dim*2 + params.conf_dim,
                                                  params.hidden_dim), nn.SiLU(inplace=True),
-                                       nn.Linear(params.hidden_dim, params.hidden_dim*2))
+                                       nn.Linear(params.hidden_dim, params.hidden_dim*2),
+                                       nn.Tanh())
 
 
 

@@ -259,6 +259,8 @@ class WorldModel(nn.Module):
         max_seq_length = max(config.JointTrainAgent.BatchLength, 
                              config.JointTrainAgent.ImagineContextLength + config.JointTrainAgent.ImagineBatchLength, 
                              config.JointTrainAgent.RealityContextLength)
+
+        # Image encoder
         self.encoder = Encoder(
             depth=config.Models.WorldModel.Encoder.Depth,
             mults=config.Models.WorldModel.Encoder.Mults, 
@@ -365,6 +367,7 @@ class WorldModel(nn.Module):
         self.lr_scheduler = torch.optim.lr_scheduler.LambdaLR(self.optimizer, lr_lambda=lambda step: 1.0)
         self.warmup_scheduler = LinearWarmup(self.optimizer, warmup_period=config.Models.WorldModel.Warmup_steps)
         self.scaler = torch.cuda.amp.GradScaler(enabled=self.use_amp and config.Models.WorldModel.dtype is not torch.bfloat16)
+
     @profile
     def encode_obs(self, obs):
         with torch.autocast(device_type='cuda', dtype=torch.bfloat16, enabled=self.use_amp):
@@ -373,6 +376,7 @@ class WorldModel(nn.Module):
             sample = self.stright_throught_gradient(post_logits, sample_mode="random_sample")
             flattened_sample = self.flatten_sample(sample)
         return flattened_sample
+
     @profile
     def calc_last_dist_feat(self, latent, action, inference_params=None):
         with torch.autocast(device_type='cuda', dtype=torch.bfloat16, enabled=self.use_amp):
@@ -386,6 +390,7 @@ class WorldModel(nn.Module):
             prior_sample = self.stright_throught_gradient(prior_logits, sample_mode="random_sample")
             prior_flattened_sample = self.flatten_sample(prior_sample)
         return prior_flattened_sample, last_dist_feat
+
     @profile
     def calc_last_post_feat(self, latent, action, current_obs, inference_params=None):
         with torch.autocast(device_type='cuda', dtype=torch.bfloat16, enabled=self.use_amp):
@@ -408,6 +413,7 @@ class WorldModel(nn.Module):
             post_flattened_sample = self.flatten_sample(post_sample)            
 
         return post_flattened_sample, post_feat    
+
     @profile
     # only called when using Transformer
     def predict_next(self, last_flattened_sample, action, log_video=True):
@@ -428,6 +434,7 @@ class WorldModel(nn.Module):
             termination_hat = termination_hat > 0
 
         return obs_hat, reward_hat, termination_hat, prior_flattened_sample, dist_feat
+
     @profile
     def stright_throught_gradient(self, logits, sample_mode="random_sample"):
         dist = OneHotCategorical(logits=logits)
@@ -465,6 +472,7 @@ class WorldModel(nn.Module):
             self.action_buffer = torch.zeros(scalar_size, dtype=dtype, device=device)
             self.reward_hat_buffer = torch.zeros(scalar_size, dtype=dtype, device=device)
             self.termination_hat_buffer = torch.zeros(scalar_size, dtype=dtype, device=device)
+
     @profile
     def imagine_data(self, agent: agents.ActorCriticAgent, sample_obs, sample_action,
                      imagine_batch_size, imagine_batch_length, log_video, logger, global_step):
@@ -558,6 +566,7 @@ class WorldModel(nn.Module):
             if inference_params.seqlen_offset >= max_length:
                 return True
             return False
+
         with torch.autocast(device_type='cuda', dtype=torch.bfloat16, enabled=self.use_amp and not self.use_cg):
             context_dist_feat = get_hidden_state(context_latent, sample_action, inference_params)
             inference_params.seqlen_offset += context_dist_feat.shape[1]
@@ -612,6 +621,7 @@ class WorldModel(nn.Module):
                 img_frames = obs_hat.permute(1, 2, 3, 0, 4)
                 img_frames = img_frames.reshape(imagine_batch_length+1, 3, 64, 64 * 4).cpu().float().detach().numpy().astype(np.uint8)
                 logger.log("Imagine/predict_video", img_frames, global_step=global_step)
+
         return torch.cat([self.sample_buffer, self.dist_feat_buffer], dim=-1), self.action_buffer, old_logits_tensor, torch.cat([context_flattened_sample, context_dist_feat], dim=-1), self.reward_hat_buffer, self.termination_hat_buffer
 
 

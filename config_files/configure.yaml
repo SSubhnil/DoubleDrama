@@ -10,6 +10,9 @@ BasicSettings:
   Compile: True
   SavePath: None
 
+  CausalGradCheckpoint: True    # Saves 40% VRAM
+  CausalChunkSize: 8            # For long sequences
+
 Evaluate:
    EpisodeNum: 10
    NumEnvs: 10
@@ -38,7 +41,10 @@ JointTrainAgent:
   Tau: 10
   ImaginationTau: 10
   Alpha: 1.0 # High focus on penalising high imagine counts regardless of train counts, less probability to be sampled
-  Beta: 1.0 # High focus on penalising 
+  Beta: 1.0 # High focus on penalising
+
+  CausalWarmUp: 2000              # Causal model pretraining
+  AlternateTrainEvery: 5          # Alternate WM/causal training
 
 Models:
   WorldModel:
@@ -48,7 +54,7 @@ Models:
     Act: SiLU
     CategoricalDim: 32
     ClassDim: 32
-    HiddenStateDim: 512
+    HiddenStateDim: 512      # Must be greater than CodeDim *2 + Confdim
     Optimiser: Laprop
     LatentDiscreteType: naive
     Max_grad_norm: 1000
@@ -92,7 +98,45 @@ Models:
       d_intermediate: 0
       ssm_cfg:
         d_state: 16
-    
+
+  CausalModel:
+    dtype: float32
+    CodeDim: 64               # Dimension of codebook entries
+    ConfDim: 32               # Confounder dimension
+    NumCodesTr: 512           # Transition codebook size
+    NumCodesRe: 256           # Reward codebook size
+    HiddenDim: 256            # Hidden dimension for MLPs
+    KLWeight: 0.1             # KL Divergence loss weight
+    QuantWeight: 0.5          # Quantization loss weight
+    RegWeight: 0.01           # Regularization loss weight
+    InvarianceWeight: 0.3     # Mechanism invariance loss
+    SparsityWeight: 0.1       # Mask sparsity regularization
+
+    Quantizer:
+      Temperature: 1.0        # Initial Gumbel softmax temp
+      AnnealFactor: 0.95      # Temp decay per update
+      MinTemperature: 0.1     # Lower temperature bound
+      Beta: 0.25              # Commitment loss weight
+      NormalizedInputs: True  # L2 normalize inputs/codebook
+      Coupling: True          # Enable codebook coupling
+      LambdaCouple: 0.1       # Coupling loss weight
+
+    Confounder:
+      PriorLayers: 2          # MLP layers for prior network
+      PostLayers: 2           # MLP layers for posterior
+      AffineInitStd: 0.01     # Affine param initialization
+      MinLogVar: -6.0         # Posterior variance bounds
+      MaxLogVar: 0.0
+
+    Modulation:
+      MaskInitScale: 0.5      # Initial scale for modulation
+      MaskSparsity: 0.8       # Target sparsity ratio
+      MinScale: 0.1           # Clamp scale values
+      MaxScale: 1.9           # Uppder clamp scale value
+
+    Integration:
+      GradDetachWorld: True   # Detach world model gradients
+      AnnealSteps: 1000       # Mask sparsity warmup
 
   Agent:
     dtype: float32
